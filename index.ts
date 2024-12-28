@@ -1,3 +1,3 @@
 import FileManagerInterface from "./library";
 
-const filemanager = new FileManagerInterface('../');
+const filemanager = new FileManagerInterface('');

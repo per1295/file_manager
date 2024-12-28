@@ -1,17 +1,19 @@
 import { stdin, stdout } from "process";
-import { createInterface } from "readline/promises";
+import { createInterface, Readline } from "readline/promises";
 import { join, resolve, normalize, parse as pathParse } from "path";
 import { readdir, stat } from "fs/promises";
 import { EventEmitter } from "events";
+import { promisify } from "util";
 
-import type { Interface } from "readline/promises";
-import type { Key } from "readline";
+import { moveCursor, type Key } from "readline";
 import type {
     IChosenDirContent,
     IActiveChosenContent,
     KeyDownEvents,
     AnyFunc,
-    TargetTerminalSpace
+    TargetTerminalSpace,
+    IUpdateInterface,
+    DeskMenuGen
 } from "./types";
 
 class FileManager {
@@ -134,16 +136,24 @@ export default class FileManagerInterface extends FileManager {
     private PROMPT = '> ';
     private ROW_CHARACTER = '|';
     private COLUMN_CHARACTER = '-'
-    private HORIZONTAL_PADDING = ' '.repeat(2);
+    private ROW_PADDING = ' '.repeat(2);
     
     // Writing desk menu constants
     private DESK_MENU_FILE = ['RENAME', 'DELETE', 'BACK'];
     private DESK_MENU_DIR = [...this.DESK_MENU_FILE, 'OPEN'];
 
-    private _rl: Interface;
+    private _deskPartLength: number | null = null;
     private _activeChosenDirContent: IActiveChosenContent | null = null;
     private _keydownObserver = new KeyDownObserver();
     private _targetDeskMenuItemIndex = 0;
+    private _rl = createInterface({
+        input: stdin,
+        output: stdout,
+        terminal: true,
+        historySize: 0,
+        prompt: ''
+    });
+    private _readline = new Readline(stdout);
 
     private get targetDeskMenuItemIndex() {
         return this._targetDeskMenuItemIndex;
@@ -165,16 +175,15 @@ export default class FileManagerInterface extends FileManager {
         }
     }
 
+    private get numColumns() {
+        let [ numColumns ] = stdout.getWindowSize();
+        numColumns -= 1;
+
+        return numColumns;
+    }
+
     constructor(startDir = '') {
         super(startDir);
-
-        this._rl = createInterface({
-            input: stdin,
-            output: stdout,
-            terminal: true,
-            historySize: 0,
-            prompt: ''
-        });
 
         this._keydownObserver.onDown(this._handleDownDir.bind(this), this._handleDownDesk.bind(this));
         this._keydownObserver.onUp(this._handleUpDir.bind(this), this._handleUpDesk.bind(this));
@@ -185,62 +194,47 @@ export default class FileManagerInterface extends FileManager {
 
     private async _initilize() {
         await this._readChosenDir();
-        this._writeInterface();
+        await this._writeInterface();
         
         stdin.on('keypress', this._handleKeypress.bind(this));
     }
 
-    private _writeInterface() {
-        // Clearing stdout (console)
-        this._rl.write(null, {
-            ctrl: true,
-            name: 'l'
-        });
-
-        // console.dir(this._chosenDirContents);
-
-        let [ numColumns ] = stdout.getWindowSize();
-        numColumns -= 1;
-
+    private async _writeInterface() {
         let interfaceStr = '';
+        const numColumns = this.numColumns;
+
         let horizontalBorder = this.COLUMN_CHARACTER.repeat(numColumns);
-        interfaceStr += `${horizontalBorder}\n`;
+        interfaceStr += horizontalBorder;
 
         const workingDirGen = this._writeWorkingDir(numColumns);
-        let deskMenuGen: Generator<string, void, unknown> | null = null;
+        let deskMenuGen: DeskMenuGen = null;
         let needToWriteWorkingDirLine = true;
-        
+
         while(true) {
             let interfaceLine = '';
 
             if ( needToWriteWorkingDirLine ) {
-                const { done, value: workingDirValue } = workingDirGen.next();
+                const { done, value: workingDirLine } = workingDirGen.next();
 
                 if ( done ) {
                     break;
                 }
 
-                const [ workingDirLine, deskPartLength ] = workingDirValue;
-
                 if ( !deskMenuGen ) {
-                    deskMenuGen = this._writeDeskMenu(deskPartLength);
+                    deskMenuGen = this._writeDeskMenu();
                 }
 
                 const { value: deskMenuLine } = deskMenuGen.next();
 
-                interfaceLine += `${workingDirLine}${this.ROW_CHARACTER}${deskMenuLine}`;
-                interfaceLine += `${this.ROW_CHARACTER}\n`;
+                interfaceLine += `${workingDirLine}${deskMenuLine}`;
 
                 needToWriteWorkingDirLine = false;
             } else {
-                const deskPartPaddingLength = Math.ceil(numColumns * this.DESK_PART) - 1;
-                const workingDirPartLength = Math.floor(numColumns - deskPartPaddingLength);
-
-                interfaceLine += `${this.ROW_CHARACTER}${' '.repeat(workingDirPartLength)}${this.ROW_CHARACTER}`;
-
+                const deskPartLength = Math.ceil(numColumns * this.DESK_PART) - 1;
+                const workingDirPartLength = Math.floor(numColumns - deskPartLength);
                 const { value: deskMenuLine } = deskMenuGen!.next();
 
-                interfaceLine += `${deskMenuLine}${this.ROW_CHARACTER}\n`;
+                interfaceLine += `\n${this.ROW_CHARACTER}${' '.repeat(workingDirPartLength)}${deskMenuLine}`;
 
                 needToWriteWorkingDirLine = true;
             }
@@ -248,43 +242,43 @@ export default class FileManagerInterface extends FileManager {
             interfaceStr += interfaceLine;
         }
 
-        interfaceStr += `${horizontalBorder}\n`;
+        interfaceStr += `\n${horizontalBorder}\n`;
 
         this._rl.write(interfaceStr);
     }
 
     private *_writeWorkingDir(numColumns: number) {
-        let contentIndex = 0;
-        let deskPartLength: number | null = null;
-
-        for ( let content of this.chosenDirContentsInterface ) {
+        for ( let i = 0; i < this.chosenDirContentsInterface.length; i++ ) {
+            const content = this.chosenDirContentsInterface.at(i) as string;
             let workingDirLine = '';
 
             const isWorkingDirActive = this._keydownObserver.targetTerminalSpace === 'workingDir';
-            const isTarget = contentIndex === this.indexTargetContent && isWorkingDirActive;
-            const horizontalBorder = `${this.ROW_CHARACTER}${this.HORIZONTAL_PADDING}`;
+            const isTarget = i === this.indexTargetContent && isWorkingDirActive;
+            const horizontalBorder = `\n${this.ROW_CHARACTER}${this.ROW_PADDING}`;
 
             workingDirLine += horizontalBorder;
             workingDirLine += `${isTarget ? this.PROMPT : ''}${content}`;
 
             const allPaddingCount = numColumns - workingDirLine.length - 2;
 
-            if ( !deskPartLength ) {
-                deskPartLength = Math.ceil(allPaddingCount * this.DESK_PART) - 1;
+            if ( !this._deskPartLength ) {
+                this._deskPartLength = Math.ceil(allPaddingCount * this.DESK_PART);
             }
 
-            const rightPaddingCount = Math.abs( Math.ceil(allPaddingCount - deskPartLength) );
+            const rightPaddingCount = Math.abs( Math.ceil(allPaddingCount - this._deskPartLength) ) + 1;
             const rightPadding = ' '.repeat(rightPaddingCount);
 
             workingDirLine += rightPadding;
 
-            contentIndex++;
-
-            yield [ workingDirLine, deskPartLength ] as [ string, number ];
+            yield workingDirLine;
         }
     }
 
-    private *_writeDeskMenu(deskPartLength: number) {
+    private *_writeDeskMenu() {
+        if ( !this._deskPartLength ) {
+            throw new TypeError('deskPartLength was not defined');
+        }
+
         if ( this._activeChosenDirContent ) {
             const deskMenuItems = this._activeChosenDirContent.isDir ? this.DESK_MENU_DIR : this.DESK_MENU_FILE;
             const longestItemLength = Math.max( ...deskMenuItems.map(item => item.length) );
@@ -293,7 +287,8 @@ export default class FileManagerInterface extends FileManager {
 
             for ( const deskMenuItem of deskMenuItems ) {
                 let horizontalBorder = this.COLUMN_CHARACTER.repeat(longestItemLength + 4);
-                let horizontalBorderCentered = this._centredDeskMenuItem(horizontalBorder, deskPartLength);
+                let horizontalBorderCentered = this._centredDeskMenuItem(horizontalBorder, this._deskPartLength);
+                horizontalBorderCentered = this._borderedDeskMenuItem(horizontalBorder);
 
                 yield horizontalBorderCentered;
 
@@ -309,7 +304,8 @@ export default class FileManagerInterface extends FileManager {
                 const isDeskMenuItemTarget = this.targetDeskMenuItemIndex === deskMenuItemIndex && this._keydownObserver.targetTerminalSpace === 'deskMenu';
                 let deskItemLine = `${this.ROW_CHARACTER}${' '.repeat(innerLeftPaddingCount)}${deskMenuItem}${' '.repeat(innerRightPaddingCount)}${this.ROW_CHARACTER}`;
 
-                deskItemLine = this._centredDeskMenuItem(deskItemLine, deskPartLength, isDeskMenuItemTarget);
+                deskItemLine = this._centredDeskMenuItem(deskItemLine, this._deskPartLength, isDeskMenuItemTarget);
+                deskItemLine = this._borderedDeskMenuItem(deskItemLine);
 
                 yield deskItemLine;
 
@@ -320,12 +316,10 @@ export default class FileManagerInterface extends FileManager {
         }
 
         while(true) {
-            let deskMenuLine = '';
+            const leftPadding = ' '.repeat(this._deskPartLength);
 
-            const leftPaddingCount = Math.floor(deskPartLength);
-            const leftPadding = ' '.repeat(leftPaddingCount);
-
-            deskMenuLine += leftPadding;
+            let deskMenuLine = leftPadding;
+            deskMenuLine = this._borderedDeskMenuItem(deskMenuLine);
 
             yield deskMenuLine;
         }
@@ -347,11 +341,68 @@ export default class FileManagerInterface extends FileManager {
         
         return `${' '.repeat(leftPaddingCount)}${isItemTarget ? this.PROMPT : ''}${item}${' '.repeat(rightPaddingCount)}`;
     }
-    
+
+    private _borderedDeskMenuItem(item: string) {
+        return `${this.ROW_CHARACTER}${item}${this.ROW_CHARACTER}`;
+    }
+
+    private async _updateInterface(inf: IUpdateInterface) {
+        const { type, value, oldValue } = inf;
+
+        switch(type) {
+            case 'changeTargetContent':
+                {
+                    if ( typeof value !== 'number' || typeof oldValue !== 'number' ) {
+                        throw new TypeError('oldValue and value are not a numbers');
+                    }
+
+                    const isToStartFromDown = value === 0 && oldValue === this.chosenDirContentsPath.length - 1;
+                    const isToDownFromStart = value === this.chosenDirContentsPath.length - 1 && oldValue === 0;
+                    const isDown = value > oldValue || isToStartFromDown;
+                    const dy_1 = -Math.floor((this.chosenDirContentsPath.length - value) * 2) - 1;
+                    const dy_2 = isToStartFromDown ? (this.chosenDirContentsPath.length - 1) * 2 :
+                        isToDownFromStart ? -(this.chosenDirContentsPath.length - 1) * 2 :
+                        isDown ? -2 : 2;
+                    const dy_3 = (this.chosenDirContentsPath.length - oldValue + 1) * 2;
+                    const numColumns = this.numColumns;
+
+                    const writeWorkingDirGen = this._writeWorkingDir(numColumns);
+                    const writeWorkingDirArr = Array.from(writeWorkingDirGen);
+                    const line = writeWorkingDirArr.at(value) as string;
+                    const prevLine = writeWorkingDirArr.at(oldValue) as string;
+                    const deskMenuGen = this._writeDeskMenu();
+                    const { value: deskMenuValue } = deskMenuGen.next();
+
+                    await this._readline
+                        .moveCursor(0, dy_1)
+                        .clearLine(1)
+                        .moveCursor(0, -1)
+                        .commit();
+
+                    this._rl.write(`${line}${deskMenuValue}\n`);
+
+                    await this._readline
+                        .moveCursor(0, dy_2 - 1)
+                        .clearLine(1)
+                        .moveCursor(0, -1)
+                        .commit();
+
+                    this._rl.write(`${prevLine}${deskMenuValue}\n`);
+
+                    await this._readline
+                        .moveCursor(0, dy_3 - 1)
+                        .commit();
+                }
+                break;
+            case 'changeTargetSpace':
+
+                break;
+        }
+    }
 
     private async _handleKeypress(_s: string | undefined, key: Key) {
         if ( key.ctrl && key.name === 'c' ) {
-            process.exit();
+            process.exit(0);
         }
 
         // console.log(key);
@@ -372,24 +423,34 @@ export default class FileManagerInterface extends FileManager {
         }
     }
 
-    private _handleUpDir() {
+    private async _handleUpDir() {
+        const oldValue = this.indexTargetContent;
         this.indexTargetContent--;
-        this._writeInterface();
+
+        await this._updateInterface({
+            type: 'changeTargetContent',
+            value: this.indexTargetContent,
+            oldValue
+        });
     }
 
-    private _handleUpDesk() {
-        this.targetDeskMenuItemIndex--;
-        this._writeInterface();
-    }
-
-    private _handleDownDir() {
+    private async _handleDownDir() {
+        const oldValue = this.indexTargetContent;
         this.indexTargetContent++;
-        this._writeInterface();
+
+        await this._updateInterface({
+            type: 'changeTargetContent',
+            value: this.indexTargetContent,
+            oldValue
+        });
+    }
+
+    private async _handleUpDesk() {
+        this.targetDeskMenuItemIndex--;
     }
 
     private _handleDownDesk() {
         this.targetDeskMenuItemIndex++;
-        this._writeInterface();
     }
 
     private async _handleEnterDir() {
@@ -406,8 +467,9 @@ export default class FileManagerInterface extends FileManager {
                 path: contentPath,
                 isDir: isDirectory
             };
-
-            this._writeInterface();
+            this._updateInterface({
+                type: 'changeTargetSpace'
+            });
         }
     }
 
@@ -424,8 +486,6 @@ export default class FileManagerInterface extends FileManager {
                 this._keydownObserver.emit('change', 'workingDir');
                 this.targetDeskMenuItemIndex = 0;
                 this._activeChosenDirContent = null;
-
-                this._writeInterface();
                 break;
             case 'DELETE':
 
@@ -438,8 +498,6 @@ export default class FileManagerInterface extends FileManager {
                 this._keydownObserver.emit('change', 'workingDir');
                 this.targetDeskMenuItemIndex = 0;
                 this._activeChosenDirContent = null;
-
-                this._writeInterface();
                 break;
         }
     }
