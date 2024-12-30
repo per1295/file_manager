@@ -23,3 +23,8 @@ export interface IUpdateInterface<ValueType = string | number> {
 type UpdateInterfaceType = 'changeTargetContent' | 'changeTargetSpace';
 
 export type DeskMenuGen = Generator<string, void, unknown> | null;
+
+export interface IStartDeskMenuCoords {
+    dx: number;
+    dy: number;
+}
