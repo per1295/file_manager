@@ -7,24 +7,41 @@ export interface IActiveChosenContent {
     path: string;
     isDir: boolean;
 }
+export enum KeyDownEvents {
+    CHANGE,
+    DOWN,
+    UP,
+    ENTER
+}
 
-export type KeyDownEvents = 'change' | 'down' | 'up' | 'enter';
+export type AnyFunc<TArg = unknown | never, TReturn = void> = (...args: TArg[]) => TReturn | Promise<TReturn>;
 
-export type AnyFunc<TArgs = any, TReturn = void> = (...args: TArgs[]) => TReturn;
+export enum TargetTerminalSpace {
+    WORKING_DIR,
+    DESK_MENU
+}
 
-export type TargetTerminalSpace = 'workingDir' | 'deskMenu';
-
-export interface IUpdateInterface<ValueType = string | number> {
+export interface IUpdateInterface<ValueType = unknown> {
     type: UpdateInterfaceType;
     oldValue?: ValueType;
     value?: ValueType;
 }
 
-type UpdateInterfaceType = 'changeTargetContent' | 'changeTargetSpace';
+export enum UpdateInterfaceType {
+    CHANGE_TARGET_CONTENT,
+    CHANGE_TARGET_SPACE,
+    OPEN_DIR,
+    REMOVE_CONTENT
+}
 
 export type DeskMenuGen = Generator<string, void, unknown> | null;
 
-export interface IStartDeskMenuCoords {
+export interface IStartCoords {
     dx: number;
     dy: number;
+}
+
+export interface ITerminalSize {
+    numColumns: number;
+    numRows: number;
 }
