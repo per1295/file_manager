@@ -4,15 +4,18 @@
 
 ## Tech Stack
 
-    Node, Express
+    Production: Node
+    Development: TypeScript, ESLint
 
 
 ## Launch
 
-To lauch this project run
+To lauch this project run:
 
-```bash
-  npm start
-```
+    npm start
 
-But you need do it in the **external terminal**
+## Lint
+
+To lint this project run:
+
+    npm run lint *filename*
