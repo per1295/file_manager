@@ -1,3 +1,3 @@
 import FileManagerInterface from "./library";
 
-new FileManagerInterface();
+new FileManagerInterface('..');

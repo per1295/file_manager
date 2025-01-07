@@ -7,12 +7,17 @@ export interface IActiveChosenContent {
     path: string;
     isDir: boolean;
 }
+
 export enum KeyDownEvents {
     CHANGE,
     DOWN,
     UP,
-    ENTER
+    ENTER,
+    FORWARD,
+    BACKWARD
 }
+
+export type KeyDownEventsKeys = keyof typeof KeyDownEvents;
 
 export type AnyFunc<TArg = unknown | never, TReturn = void> = (...args: TArg[]) => TReturn | Promise<TReturn>;
 
